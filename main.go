@@ -7,21 +7,25 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 )
 
+const version = "v1.0.1"
+
 var (
-	srcIndex, destIndex, srcAddr, destAddr    string
-	copySettings, copyMappings, copyAll, help bool
-	client                                    = &http.Client{
+	srcIndex, destIndex, srcAddr, destAddr                 string
+	copySettings, copyMappings, copyAll, help, showVerison bool
+	client                                                 = &http.Client{
 		Timeout: 10 * time.Second,
 	}
 )
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&help, "help", "h", false, "帮助信息")
+	rootCmd.PersistentFlags().BoolVarP(&showVerison, "verison", "v", false, "版本信息")
 	rootCmd.PersistentFlags().StringVarP(&srcIndex, "src_index", "x", "", "源索引名称")
 	rootCmd.PersistentFlags().StringVarP(&destIndex, "dest_index", "y", "", "目标索引名称")
 	rootCmd.PersistentFlags().StringVarP(&srcAddr, "src_addr", "s", "http://localhost:9200", "源ES服务器地址")
@@ -35,6 +39,10 @@ var rootCmd = &cobra.Command{
 	Use:   "estools",
 	Short: "ES工具",
 	Run: func(cmd *cobra.Command, args []string) {
+		if showVerison {
+			fmt.Println(version)
+			return
+		}
 		if srcIndex == "" {
 			fmt.Println("error: --src_index is required, type --help for more details")
 			return
@@ -47,15 +55,17 @@ var rootCmd = &cobra.Command{
 				settings[k] = v
 			}
 			syncData(settings)
-
+			return
 		}
 		if copyMappings {
 			mappings := getMappings()
 			syncData(mappings)
+			return
 		}
 		if copySettings {
 			settings := getSettings()
 			syncData(settings)
+			return
 		}
 
 		cmd.Help()
@@ -121,10 +131,26 @@ func syncData(data map[string]interface{}) {
 		destIndex = srcIndex
 	}
 
+	url := fmt.Sprintf("%s/%s", destAddr, destIndex)
+	sv, _ := strconv.Atoi(string(getEsVersion(srcAddr)[0]))
+	dv, _ := strconv.Atoi(string(getEsVersion(destAddr)[0]))
+
+	if sv < 7 && dv >= 7 {
+		url = fmt.Sprintf("%s/%s?include_type_name=true", destAddr, destIndex)
+	}
+
+	if dv < 7 {
+		if _, ok := data["mappings"].(map[string]interface{})["properties"]; ok {
+			data["mappings"] = map[string]interface{}{
+				"_doc": data["mappings"],
+			}
+		}
+	}
+
 	body := bytes.Buffer{}
 	json.NewEncoder(&body).Encode(data)
 
-	req, _ := http.NewRequest("PUT", fmt.Sprintf("%s/%s?include_type_name=true", destAddr, destIndex), &body)
+	req, _ := http.NewRequest("PUT", url, &body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -136,9 +162,38 @@ func syncData(data map[string]interface{}) {
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		fmt.Println("put data: ", string(body))
+
+		limit := 300
+		err := string(body)
+		if len(err) > limit {
+			err = err[:limit] + "..."
+		}
+		fmt.Println("put data: ", err)
 		os.Exit(1)
 	}
+}
+
+func getEsVersion(addr string) string {
+	resp, err := client.Get(addr)
+	if err != nil {
+		fmt.Println("get esVersion: ", err)
+		os.Exit(1)
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Println("get esVersion: ", string(body))
+		os.Exit(1)
+	}
+
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var data map[string]interface{}
+	json.Unmarshal(body, &data)
+
+	version := data["version"].(map[string]interface{})["number"].(string)
+	return version
 }
 
 func main() {
