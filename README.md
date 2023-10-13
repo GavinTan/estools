@@ -6,5 +6,5 @@ elasticserach索引mappings与settings同步工具
 
 ## 安装
 ```
-go install github.com/GavinTan/hs@latest
+go install github.com/GavinTan/estools@latest
 ```
