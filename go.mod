@@ -1,4 +1,4 @@
-module estools
+module github.com/gavintan/estools
 
 go 1.19
 
