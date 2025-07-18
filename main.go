@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "v1.0.1"
+const version = "v1.0.2"
 
 var (
 	srcIndex, destIndex, srcAddr, destAddr                 string
@@ -92,12 +92,32 @@ func getSettings() map[string]interface{} {
 	var data map[string]interface{}
 	json.Unmarshal(body, &data)
 
-	settings := data[srcIndex].(map[string]interface{})
+	var settings map[string]interface{}
+	if indexSetting, ok := data[srcIndex]; ok {
+		settings = indexSetting.(map[string]interface{})
+	} else {
+		for _, indexSetting := range data {
+			settings = indexSetting.(map[string]interface{})
+			break
+		}
+	}
 
-	delete(settings["settings"].(map[string]interface{})["index"].(map[string]interface{}), "creation_date")
-	delete(settings["settings"].(map[string]interface{})["index"].(map[string]interface{}), "uuid")
-	delete(settings["settings"].(map[string]interface{})["index"].(map[string]interface{}), "version")
-	delete(settings["settings"].(map[string]interface{})["index"].(map[string]interface{}), "provided_name")
+	// 清理es内部生成的设置元数据
+	if indexSettings, ok := settings["settings"].(map[string]interface{}); ok {
+		if indexMeta, ok := indexSettings["index"].(map[string]interface{}); ok {
+			delete(indexMeta, "creation_date")
+			delete(indexMeta, "uuid")
+			delete(indexMeta, "version")
+			delete(indexMeta, "provided_name")
+			delete(indexMeta, "resize")
+
+			if routing, ok := indexMeta["routing"].(map[string]interface{}); ok {
+				if allocation, ok := routing["allocation"].(map[string]interface{}); ok {
+					delete(allocation, "initial_recovery")
+				}
+			}
+		}
+	}
 
 	return settings
 }
@@ -121,7 +141,15 @@ func getMappings() map[string]interface{} {
 	var data map[string]interface{}
 	json.Unmarshal(body, &data)
 
-	mappings := data[srcIndex].(map[string]interface{})
+	var mappings map[string]interface{}
+	if indexMapping, ok := data[srcIndex]; ok {
+		mappings = indexMapping.(map[string]interface{})
+	} else {
+		for _, indexMapping := range data {
+			mappings = indexMapping.(map[string]interface{})
+			break
+		}
+	}
 
 	return mappings
 }
